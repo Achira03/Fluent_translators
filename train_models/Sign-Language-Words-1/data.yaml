@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 6
+names: ['hello', 'help', 'house', 'iloveyou', 'no', 'yes']
+
+roboflow:
+  workspace: vehimi-pxkc4
+  project: sign-language-words-j4axd
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/vehimi-pxkc4/sign-language-words-j4axd/dataset/1

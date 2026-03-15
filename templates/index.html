@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fluent Translator (Dual Mode)</title>
+    <!-- โหลด Font ทันสมัย -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- ฝัง CSS บริสุทธิ์ในไฟล์เดียวกันเพื่อความสะดวกรวดเร็ว -->
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --card-bg: #161b22;
+            --primary: #58a6ff;
+            --primary-hover: #3182ce;
+            --text-main: #c9d1d9;
+            --text-muted: #8b949e;
+            --border-color: #30363d;
+            --accent: #8957e5;
+            --json-bg: #010409;
+            --danger: #f85149;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Kanit', 'Inter', sans-serif;
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+            animation: fadeInDown 0.8s ease-out;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            font-size: 1.8rem;
+        }
+
+        h1 { font-weight: 800; }
+        .highlight { color: var(--primary); }
+        .subtitle { color: var(--text-muted); font-size: 1.1rem; margin-top: 0.5rem; }
+
+        .main-content {
+            display: flex;
+            gap: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            flex-wrap: wrap;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.8rem;
+            flex: 1;
+            min-width: 450px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        h2 { color: #fff; font-size: 1.3rem; margin-bottom: 0.5rem; }
+        .card > p { color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.5rem; }
+
+        /* แถบเปลี่ยนโหมด (Toggle Mode) */
+        .mode-selector {
+            display: flex;
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 0.4rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 0.8rem;
+            background: transparent;
+            color: var(--text-muted);
+            border: none;
+            border-radius: 8px;
+            font-family: inherit;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .mode-btn.active {
+            background: var(--primary);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(88, 166, 255, 0.3);
+        }
+
+        /* Video Feed */
+        .video-container {
+            border-radius: 12px;
+            overflow: hidden;
+            aspect-ratio: 4/3;
+            border: 1px solid var(--border-color);
+            position: relative;
+        }
+
+        .video-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* ตะกร้าสะสมคำศัพท์ */
+        .basket-box {
+            background: var(--json-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            min-height: 120px;
+            margin-bottom: 1.5rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: flex-start;
+            align-content: flex-start;
+        }
+
+        .word-tag {
+            background: rgba(137, 87, 229, 0.2);
+            color: #d2a8ff;
+            border: 1px solid rgba(137, 87, 229, 0.5);
+            padding: 0.4rem 1rem;
+            border-radius: 20px;
+            font-size: 1.1rem;
+            font-weight: 500;
+            animation: popIn 0.3s ease-out;
+        }
+
+        /* ปุ่มและ Control */
+        .btn-group {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        button {
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .capture-btn {
+            flex: 2;
+            padding: 1rem;
+            background: #238636;
+            color: white;
+            font-size: 1.1rem;
+        }
+        .capture-btn:hover { background: #2ea043; }
+
+        .clear-btn {
+            flex: 1;
+            background: var(--bg-color);
+            color: var(--danger);
+            border: 1px solid var(--border-color);
+            font-size: 1rem;
+        }
+        .clear-btn:hover { border-color: var(--danger); }
+
+        .translate-btn {
+            width: 100%;
+            padding: 1.2rem;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            color: white;
+            font-size: 1.2rem;
+            border-radius: 12px;
+        }
+        .translate-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(88, 166, 255, 0.4); }
+        .translate-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+
+        /* ผลลัพธ์ */
+        .result-section { margin-top: 2rem; }
+        .json-display {
+            background: var(--json-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.2rem;
+            color: #a5d6ff;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            min-height: 100px;
+        }
+
+        /* Loader Animation */
+        .loader {
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .hidden { display: none !important; }
+
+        /* Animation เวลาถูก Auto Capture */
+        .flash-success {
+            animation: flashGreen 0.5s ease-out;
+        }
+
+        @keyframes flashGreen {
+            0% { box-shadow: 0 0 0px 0px rgba(46, 160, 67, 0); border-color: var(--border-color); }
+            30% { box-shadow: 0 0 40px 10px rgba(46, 160, 67, 0.8); border-color: #2ea043; }
+            100% { box-shadow: 0 0 0px 0px rgba(46, 160, 67, 0); border-color: var(--border-color); }
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="logo">
+            <span>🧏‍♂️</span>
+            <h1>Offline Sign-to-Speech <span class="highlight">Dual Mode</span></h1>
+        </div>
+        <p class="subtitle">ระบบแปลภาษามืออัจฉริยะแบบแยกโหมด (Alphabet & Words)</p>
+    </header>
+
+    <main class="main-content">
+        <!-- ฝั่งซ้าย: ตั้งค่าและกล้อง -->
+        <div class="card">
+            <h2>📷 1. โหมดระบบและกล้อง (Vision)</h2>
+            <p>เลือกโหมดเพื่อรัน Roboflow Model ที่สอดคล้องกัน</p>
+            
+            <!-- แถบสลับโหมด -->
+            <div class="mode-selector">
+                <button class="mode-btn active" id="btnAlphabet" data-mode="alphabet">🅰️ โหมดสะกดนิ้ว (A-Z)</button>
+                <button class="mode-btn" id="btnWords" data-mode="words">🗣️ โหมดคำศัพท์ (Words)</button>
+            </div>
+
+            <div class="video-container" id="videoContainer">
+                <img src="/video_feed" alt="Video Feed">
+            </div>
+            
+            <!-- ปุ่มดึงคำศัพท์ล่าสุดเข้าตะกร้า -->
+            <button class="capture-btn" id="captureBtn" style="width: 100%; margin-top: 1rem;">
+                <span>📸 เก็บคำศัพท์ที่ตรวจจับได้ล่าสุด</span>
+            </button>
+        </div>
+
+        <!-- ฝั่งขวา: ตะกร้าและแปลผล -->
+        <div class="card">
+            <h2>🧠 2. ตะกร้าคำศัพท์ (Shopping Cart)</h2>
+            <p>คำศัพท์ที่คุณแคปเจอร์มา จะถูกนำมาเรียงร้อยสู่นักแปล AI (Ollama)</p>
+            
+            <div class="basket-box" id="basketBox">
+                <!-- Word Tags จะถูกเพิ่มที่นี่ -->
+            </div>
+
+            <div class="btn-group">
+                <button class="clear-btn" id="clearBtn">🗑️ ล้างตะกร้า</button>
+            </div>
+
+            <button class="translate-btn" id="translateBtn">
+                <span id="transText">🚀 แปลประโยค และออกเสียง! (Translate & Speak)</span>
+                <div id="loader" class="loader hidden"></div>
+            </button>
+
+            <div class="result-section">
+                <h2>ผลลัพธ์จาก AI (JSON)</h2>
+                <pre class="json-display" id="jsonOutput">รอการตรวจจับคำศัพท์...</pre>
+            </div>
+        </div>
+    </main>
+
+    <!-- ฝัง Javascript ไว้ล่างสุด -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            let capturedWords = []; // ตะกร้่าเก็บคำ
+
+            // --- Elements ---
+            const btnAlphabet = document.getElementById('btnAlphabet');
+            const btnWords = document.getElementById('btnWords');
+            const captureBtn = document.getElementById('captureBtn');
+            const clearBtn = document.getElementById('clearBtn');
+            const translateBtn = document.getElementById('translateBtn');
+            const basketBox = document.getElementById('basketBox');
+            const jsonOutput = document.getElementById('jsonOutput');
+            const transText = document.getElementById('transText');
+            const loader = document.getElementById('loader');
+            const videoContainer = document.getElementById('videoContainer'); // สำหรับทำ Flash
+
+            // --- ฟังก์ชันสร้างเสียง Beep ---
+            function playBeep() {
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContext) return;
+                    const ctx = new AudioContext();
+                    const osc = ctx.createOscillator();
+                    const gainNode = ctx.createGain();
+                    
+                    osc.type = 'sine'; // เสียงนุ่มๆ
+                    osc.frequency.setValueAtTime(880, ctx.currentTime); // ความถี่เสียง (A5)
+                    
+                    // ให้เสียงเบาๆ และสั้น
+                    gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+                    
+                    osc.connect(gainNode);
+                    gainNode.connect(ctx.destination);
+                    
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.15);
+                } catch (e) {
+                    console.error("Audio block:", e);
+                }
+            }
+
+            // --- ฟังก์ชันขอบจอกระพริบสีเขียว ---
+            function triggerFlash() {
+                videoContainer.classList.remove('flash-success');
+                void videoContainer.offsetWidth; // บังคับให้เบราว์เซอร์รีเฟรช DOM เล็กน้อย
+                videoContainer.classList.add('flash-success');
+            }
+
+            // --- 0. ระบบ Auto-Capture (Polling ทุก 0.5 วินาที) ---
+            setInterval(async () => {
+                try {
+                    const res = await fetch('/api/check_auto_capture');
+                    const data = await res.json();
+                    
+                    if (data.words && data.words.length > 0) {
+                        data.words.forEach(word => {
+                            capturedWords.push(word);
+                        });
+                        renderBasket();
+                        playBeep();      // ส่งเสียง
+                        triggerFlash();  // กระพริบจอ
+                    }
+                } catch (e) {
+                    // ปิด Log ไว้เพื่อไม่ให้ Console รกหาก Server รีสตาร์ท
+                }
+            }, 500);
+
+            // --- 1. การเปลี่ยนโหมด ---
+            async function switchMode(mode, btnElement) {
+                // อัปเดต UI ของปุ่ม
+                btnAlphabet.classList.remove('active');
+                btnWords.classList.remove('active');
+                btnElement.classList.add('active');
+
+                try {
+                    // ยิง API ปรับสถานะหลังบ้าน
+                    await fetch('/api/set_mode', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode: mode })
+                    });
+                } catch (e) {
+                    console.error("Error setting mode:", e);
+                }
+            }
+
+            btnAlphabet.addEventListener('click', () => switchMode('alphabet', btnAlphabet));
+            btnWords.addEventListener('click', () => switchMode('words', btnWords));
+
+            // --- 2. การดึงคำเข้าตะกร้า ---
+            captureBtn.addEventListener('click', async () => {
+                try {
+                    const res = await fetch('/api/capture_word');
+                    const data = await res.json();
+                    
+                    if (data.word) {
+                        capturedWords.push(data.word);
+                        renderBasket();
+                    } else {
+                        alert("ยังตรวจจับคำศัพท์บนหน้าจอไม่ได้ กรุณาทำมือให้โมเดลประมวผลก่อนกด");
+                    }
+                } catch (e) {
+                    console.error('Error capturing word:', e);
+                }
+            });
+
+            // ล้างตะกร้า
+            clearBtn.addEventListener('click', () => {
+                capturedWords = [];
+                renderBasket();
+                jsonOutput.textContent = "รอการตรวจจับคำศัพท์...";
+            });
+
+            function renderBasket() {
+                basketBox.innerHTML = '';
+                capturedWords.forEach(w => {
+                    const span = document.createElement('span');
+                    span.className = 'word-tag';
+                    span.textContent = w;
+                    basketBox.appendChild(span);
+                });
+            }
+
+            // --- 3. การกดยืนยันแปลภาษา (Ollama) ---
+            translateBtn.addEventListener('click', async () => {
+                if (capturedWords.length === 0) {
+                    alert('ตะกร้ายังว่างเปล่า! กด "เก็บคำศัพท์" ก่อนครับ');
+                    return;
+                }
+
+                // สลับ UI สู่โหมดโหลด
+                transText.textContent = 'วิเคราะห์ AI...';
+                loader.classList.remove('hidden');
+                translateBtn.disabled = true;
+                jsonOutput.style.color = '#c9d1d9';
+
+                try {
+                    const response = await fetch('/api/translate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ words: capturedWords })
+                    });
+                    
+                    const data = await response.json();
+                    jsonOutput.textContent = JSON.stringify(data, null, 2);
+
+                    if (data.error) {
+                        jsonOutput.style.color = '#f85149'; // Error = สีแดง
+                    } else {
+                        jsonOutput.style.color = '#a5d6ff'; // Success = ฟ้าสว่าง
+                    }
+
+                } catch (e) {
+                    jsonOutput.textContent = "การเชื่อมต่อเซิร์ฟเวอร์ขัดข้อง: " + e;
+                    jsonOutput.style.color = '#f85149';
+                } finally {
+                    transText.textContent = '🚀 แปลประโยค และออกเสียง! (Translate & Speak)';
+                    loader.classList.remove('hidden');
+                    translateBtn.disabled = false;
+                }
+            });
+        });
+    </script>
+</body>
+</html>

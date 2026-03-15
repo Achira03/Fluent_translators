@@ -1,0 +1,254 @@
+from flask import Flask, render_template, Response, request, jsonify
+import cv2
+from ultralytics import YOLO
+import ollama
+import pyttsx3
+import json
+import threading
+import os
+import time
+
+app = Flask(__name__)
+
+# -------------------------------------------------i---------------------
+# Section 1: การโหลด Local Model (YOLOv8 .pt)
+# ----------------------------------------------------------------------
+# TODO: กรุณาเปลี่ยนชื่อไฟล์ให้ตรงกับไฟล์ .pt ของคุณ
+MODEL_ALPHABET_PATH = "D:\\Aj.anant\\Fluent_Translator\\train_models\\runs\\detect\\train3\\weights\\best_alp.pt"  # ไฟล์โมเดลโหมดสะกดนิ้ว A-Z
+MODEL_WORDS_PATH = "best_words.pt"        # ไฟล์โมเดลโหมดคำศัพท์
+
+model_alphabet = None
+model_words = None
+
+try:
+    if os.path.exists(MODEL_ALPHABET_PATH):
+        model_alphabet = YOLO(MODEL_ALPHABET_PATH)
+        print(f"✅ โหลดโมเดล Alphabet ({MODEL_ALPHABET_PATH}) สำเร็จ!")
+    else:
+        print(f"⚠️ ไม่พบไฟล์โมเดล {MODEL_ALPHABET_PATH}")
+        
+    if os.path.exists(MODEL_WORDS_PATH):
+        model_words = YOLO(MODEL_WORDS_PATH)
+        print(f"✅ โหลดโมเดล Words ({MODEL_WORDS_PATH}) สำเร็จ!")
+    else:
+        print(f"⚠️ ไม่พบไฟล์โมเดล {MODEL_WORDS_PATH}")
+except Exception as e:
+    print(f"⚠️ คำเตือน: โหลด YOLO Model ไม่สำเร็จ: {e}")
+
+# Global Variables สำหรับเก็บสถานะ
+current_mode = 'alphabet'   # ค่า default
+last_detected_word = ""     # เก็บคำล่าสุดที่กล้องจับได้
+state_lock = threading.Lock() # Lock ไว้กันข้อมูลชนกันเวลารันหลาย Thread
+
+# Variables สำหรับระบบ Auto-capture ค้าง 2 วินาที
+current_holding_word = ""
+holding_start_time = 0.0
+auto_captured_queue = []
+
+# ----------------------------------------------------------------------
+# Section 2: ฟังก์ชันอ่านออกเสียง (TTS)
+# ----------------------------------------------------------------------
+def speak_text(text):
+    """
+    ฟังก์ชันอ่านออกเสียงภาษาไทยแบบแยก Thread ไม่ให้ UI กระตุก
+    """
+    def run_speech():
+        try:
+            engine = pyttsx3.init()
+            engine.setProperty('rate', 150)
+            engine.say(text)
+            engine.runAndWait()
+        except Exception as e:
+            print(f"TTS Error: {e}")
+            
+    threading.Thread(target=run_speech, daemon=True).start()
+
+# ----------------------------------------------------------------------
+# Section 3: ฟังก์ชันดึงภาพและส่งให้ Roboflow ตามโหมดปัจจุบัน
+# ----------------------------------------------------------------------
+def generate_frames():
+    global last_detected_word, current_mode
+    global current_holding_word, holding_start_time, auto_captured_queue
+    camera = cv2.VideoCapture(0)
+    
+    frame_count = 0 
+    # process_every_n_frames = 10 # หน่วงเวลาส่ง API เพื่อประหยัดโควต้า
+    
+    while True:
+        success, frame = camera.read()
+        if not success:
+            break
+        
+        # frame = cv2.flip(frame, 1) # กลับซ้ายขวา (ปิดไว้ตามที่ผู้ใช้ต้องการ)
+        frame_count += 1
+        
+        # เลือกโมเดลที่ต้องการรันตามสถานะ current_mode ตอนนั้น
+        with state_lock:
+            active_mode = current_mode
+            
+        model = model_alphabet if active_mode == 'alphabet' else model_words
+        
+        if model is not None:
+            try:
+                # รัน YOLO prediction บนภาพ (ตีกรอบ Confidence ต่ำสุดที่ 0.5 เหมือนไฟล์ทดสอบ)
+                results = model.predict(frame, conf=0.5, verbose=False)
+                
+                highest_conf_label = ""
+                highest_conf = 0.0
+                
+                # สมมติเราดึงผลจากภาพแรก (เพราะเราโยนภาพเดียว)
+                if results and len(results) > 0:
+                    r = results[0]
+                    # ใช้ plot() ของ YOLO วาดกรอบสี่เหลี่ยมและชื่อเหมือนใน test_models.py
+                    frame = r.plot()
+                    
+                    boxes = r.boxes
+                    for box in boxes:
+                        # คำนวณความแม่นยำ (Confidence) และชื่อ Label (Class Name)
+                        conf = float(box.conf[0])
+                        class_id = int(box.cls[0])
+                        label_en = model.names[class_id] # คำศัพท์ภาษาอังกฤษที่เราเทรนไว้
+                        
+                        # บันทึกคำที่มีความมั่นใจสูงสุดในรอบนั้น
+                        if conf > highest_conf:
+                            highest_conf = conf
+                            highest_conf_label = label_en
+                
+                # อัปเดต Global Variable เพื่อรอให้หน้าเว็บกดดึงค่าไปใช้
+                with state_lock:
+                    # ปรับปรุงระบบ Auto-capture (2 วินาที)
+                    if highest_conf_label and highest_conf_label.lower() != "nothing":
+                        last_detected_word = highest_conf_label
+                        
+                        # ถ้ายกคำเดิมค้างไว้
+                        if highest_conf_label == current_holding_word:
+                            # เกิน 2 วินาทีหรือยัง?
+                            if time.time() - holding_start_time >= 2.0:
+                                auto_captured_queue.append(highest_conf_label) # เก็บลงคิว
+                                current_holding_word = "" # รีเซ็ตเวลาเพื่อไม่ให้จับซ้ำรัวๆ
+                        else:
+                            # เริ่มจับเวลาใหม่
+                            current_holding_word = highest_conf_label
+                            holding_start_time = time.time()
+                    else:
+                        # ถ้าไม่เจออะไรเลย หรือเจอคำว่า nothing ให้รีเซ็ตเวลา
+                        current_holding_word = ""
+                        holding_start_time = 0.0
+                        
+            except Exception as e:
+                print(f"เกิดข้อผิดพลาดในการประมวลผล YOLO: {e}")
+                
+        ret, buffer = cv2.imencode('.jpg', frame)
+        frame_bytes = buffer.tobytes()
+        
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+# ----------------------------------------------------------------------
+# Section 4: สร้าง Web API Routes
+# ----------------------------------------------------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/api/set_mode', methods=['POST'])
+def set_mode():
+    """ API สำหรับเปลี่ยนโหมดระหว่าง alphabet และ words """
+    global current_mode, last_detected_word
+    data = request.json
+    new_mode = data.get('mode', 'alphabet')
+    
+    with state_lock:
+        current_mode = new_mode
+        last_detected_word = "" # ล้างคำเดิมทิ้งตอนเปลี่ยนโหมด
+        
+    print(f"🔄 เปลี่ยนโหมดการตรวจจับเป็น: {new_mode}")
+    return jsonify({"status": "success", "mode": new_mode})
+
+@app.route('/api/capture_word', methods=['GET'])
+def capture_word():
+    """ API ให้หน้าเว็บดูดเอาคำศัพท์ล่าสุดที่เจอไปแปะบนตะกร้า (Manual) """
+    global last_detected_word
+    with state_lock:
+        word = last_detected_word
+    return jsonify({"word": word})
+
+@app.route('/api/check_auto_capture', methods=['GET'])
+def check_auto_capture():
+    """ API ให้หน้าเว็บเช็คว่ามีคำไหนค้างเกิน 2 วินาทีจนถูก Auto-capture แล้วบ้าง """
+    global auto_captured_queue
+    with state_lock:
+        words = list(auto_captured_queue)
+        auto_captured_queue.clear() # เคลียร์คิวทิ้งหลังดึงเสร็จ
+    return jsonify({"words": words})
+
+@app.route('/api/translate', methods=['POST'])
+def translate_sign():
+    """ API สำหรับรับตะกร้าคำศัพท์ (Array) ไปรวมแปลภาษาไทย """
+    data = request.json
+    words_array = data.get('words', [])
+    
+    if not words_array:
+        return jsonify({"error": "ไม่มีคำศัพท์ในตะกร้าให้แปล"})
+
+    # แปลง Array เป็น string ก่อนใส่ Prompt
+    words_json = json.dumps(words_array, ensure_ascii=False)
+    
+    # สร้าง System Prompt แบบ Hybrid + Autocomplete (คาดเดาคำ)
+    system_prompt = """
+    คุณคือ AI ผู้เชี่ยวชาญด้านการแปลภาษามือ (Sign Language Translator & Predictive Text AI)
+    ผู้ใช้จะส่ง Array ที่ผสมกันระหว่าง "คำศัพท์เต็มคำ" และ "ตัวอักษรเดี่ยวๆ" มาให้คุณ
+    
+    กฎการวิเคราะห์และการคาดเดาคำ (Strict Rules):
+    1. การจัดกลุ่ม (Grouping): ตัวอักษรเดี่ยวที่อยู่ติดกัน ให้คุณนำมาเรียงต่อกัน (เช่น "H", "E", "L" -> "HEL") ส่วนคำศัพท์ที่มาเป็นคำอยู่แล้ว (เช่น "Please", "Thank You") ให้คงไว้เหมือนเดิม
+    2. การคาดเดาคำอัตโนมัติ (Auto-complete / Word Prediction): **สำคัญมาก** หากกลุ่มตัวอักษรที่นำมาต่อกัน "สะกดไม่จบ" หรือ "พิมพ์ตกหล่น" (เช่น "H", "E", "L") ให้คุณใช้ความฉลาดของคุณ **คาดเดา (Guess)** ว่าคำศัพท์ภาษาอังกฤษที่ถูกต้องในบริบทนั้นคือคำว่าอะไร (เช่น "HEL" ควรจะเป็น "HELP" หรือ "HELLO")
+    3. บริบทของประโยค: นำคำที่คาดเดาเสร็จแล้ว มาเชื่อมกับคำศัพท์เต็มคำที่มีอยู่ ให้เป็นประโยคที่สมเหตุสมผล
+    4. การแปล: แปลผลลัพธ์สุดท้ายเป็นภาษาไทยที่ฟังดูเป็นธรรมชาติที่สุด
+    5. ห้ามแชทโต้ตอบ ห้ามอธิบาย ตอบกลับเป็น JSON เท่านั้น
+    
+    ตัวอย่างที่ 1 (เดาคำจากตัวอักษรไม่ครบ + คำเต็ม):
+    Input: ["Please", "H", "E", "L", "Thank You"]
+    Output: {"fluent_sentence_th": "ได้โปรดช่วยด้วย ขอบคุณ", "emotion_tone": "ขอความช่วยเหลือ/ขอบคุณ"}
+    
+    ตัวอย่างที่ 2 (เดาคำศัพท์ที่พบบ่อย):
+    Input: ["I", "A", "M", "H", "U", "N", "G"]
+    Output: {"fluent_sentence_th": "ฉันหิว", "emotion_tone": "หิว"}
+    
+    ตัวอย่างที่ 3 (ชื่อคนผสมโหมดคำศัพท์):
+    Input: ["A", "C", "H", "I", " ", "love", "D", "O", "G"]
+    Output: {"fluent_sentence_th": "อชิรักหมา", "emotion_tone": "รัก/เอ็นดู"}
+    """
+    
+    try:
+        model_name = "llama3" # หรือเปลี่ยนเป็น llama3.1/openthaigpt ตามที่โหลดไว้
+        
+        response = ollama.chat(model=model_name, messages=[
+            {
+                'role': 'system',
+                'content': system_prompt
+            },
+            {
+                'role': 'user',
+                'content': f"ตะกร้าคำศัพท์จากภาษามือคือ: {words_json}"
+            }
+        ], format='json')
+        
+        result_str = response['message']['content']
+        result_data = json.loads(result_str)
+        
+        fluent_text_th = result_data.get("fluent_sentence_th", "")
+        if fluent_text_th:
+            speak_text(fluent_text_th)
+            
+        return jsonify(result_data)
+        
+    except Exception as e:
+        error_msg = f"ข้อผิดพลาดระหว่างเชื่อมต่อ Ollama: {str(e)}"
+        return jsonify({"error": error_msg})
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)

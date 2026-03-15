@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 27
+names: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'nothing']
+
+roboflow:
+  workspace: lsmdetection
+  project: asl-alphabet-fb7de
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/lsmdetection/asl-alphabet-fb7de/dataset/2

@@ -281,7 +281,31 @@
                 <!-- Word Tags จะถูกเพิ่มที่นี่ -->
             </div>
 
-            <div class="btn-group">
+            <!-- ปุ่มเปิด/ปิด Virtual Keyboard -->
+            <button id="toggleKeyboardBtn" style="background: var(--bg-color); border: 1px solid var(--border-color); color: var(--text-main); font-size: 0.9rem; padding: 0.4rem 0.8rem; margin-bottom: 10px; border-radius: 6px; width: fit-content;">
+                ⌨️ เปิด/ปิด Manual Override
+            </button>
+
+            <!-- Virtual Keyboard (ซ่อนไว้เป็นค่าเริ่มต้น) -->
+            <div id="virtualKeyboard" style="display: none; padding: 15px; background: #21262d; border: 1px solid var(--border-color); border-radius: 12px; flex-wrap: wrap; gap: 8px;">
+                <p style="color: var(--text-muted); font-size: 13px; width: 100%; margin-bottom: 5px; font-weight: 500;">🛠️ Manual Override (คลิกจำลองการเพิ่มคำศัพท์)</p>
+                
+                <!-- สร้างปุ่ม A-Z และ nothing แบบง่ายๆ -->
+                <script>
+                    const classes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'nothing'];
+                    classes.forEach(c => {
+                        let btnColor = c === 'nothing' ? '#30363d' : 'var(--bg-color)';
+                        document.write(`<button onclick="addWordToBasket('${c}')" style="background: ${btnColor}; border: 1px solid var(--border-color); color: var(--text-main); font-size: 1rem; padding: 0.5em 0.8em; min-width: 40px;">${c}</button>`);
+                    });
+                </script>
+                
+                <button onclick="addWordToBasket('Help')" style="background: var(--primary); color: white; font-size: 1rem; padding: 0.5em 0.8em; border: none; margin-left: auto;">Help</button>
+                <button onclick="addWordToBasket('SCARE')" style="background: var(--primary); color: white; font-size: 1rem; padding: 0.5em 0.8em; border: none;">SCARE</button>
+                
+                <button onclick="addWordToBasket(' ')" style="background: #30363d; color: var(--text-main); font-size: 1rem; padding: 0.5em 2em; border: 1px solid var(--border-color); width: 100%; margin-top: 5px;">[ Space ]</button>
+            </div>
+
+            <div class="btn-group" style="margin-top: 1.5rem;">
                 <button class="clear-btn" id="clearBtn">🗑️ ล้างตะกร้า</button>
             </div>
 
@@ -298,9 +322,21 @@
     </main>
 
     <!-- ฝัง Javascript ไว้ล่างสุด -->
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
+    <script type="module">
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.8.0';
+
+        // ปิด local models เพื่อบังคับให้โหลดจาก remote (HuggingFace)
+        env.allowLocalModels = false;
+
+        document.addEventListener('DOMContentLoaded', async () => {
             let capturedWords = []; // ตะกร้่าเก็บคำ
+            let sentimentAnalyzer = null;
+
+            // ทำให้ฟังก์ชันพร้อมใช้งานจาก global scope สำหรับปุ่ม onclick html
+            window.addWordToBasket = function(word) {
+                capturedWords.push(word);
+                renderBasket();
+            };
 
             // --- Elements ---
             const btnAlphabet = document.getElementById('btnAlphabet');
@@ -313,6 +349,31 @@
             const transText = document.getElementById('transText');
             const loader = document.getElementById('loader');
             const videoContainer = document.getElementById('videoContainer'); // สำหรับทำ Flash
+
+            // --- 0. โหลดโมเดลวิเคราะห์อารมณ์ (Transformer.js) ---
+            try {
+                // Initialize model UI feedback
+                jsonOutput.textContent = "กำลังโหลดโมเดลวิเคราะห์อารมณ์ (ครั้งแรกอาจใช้เวลาสักครู่)...";
+                sentimentAnalyzer = await pipeline('sentiment-analysis', 'Xenova/distilbert-base-uncased-finetuned-sst-2-english');
+                jsonOutput.textContent = "✅ โหลดโมเดลสำเร็จ! รอการตรวจจับคำศัพท์...";
+            } catch (error) {
+                console.error("Failed to load sentiment model:", error);
+                jsonOutput.textContent = "⚠️ ไม่สามารถโหลดโมเดลวิเคราะห์อารมณ์ได้ แต่ระบบแปลภาษายังใช้งานได้ตามปกติ\nรอการตรวจจับคำศัพท์...";
+            }
+
+            // --- ฟังก์ชันวิเคราะห์อารมณ์ ---
+            window.analyzeEmotionLocally = async function(text) {
+                if (!sentimentAnalyzer) return null;
+                try {
+                    const results = await sentimentAnalyzer(text);
+                    if (results && results.length > 0) {
+                        return results[0]; // { label: 'POSITIVE' | 'NEGATIVE', score: number }
+                    }
+                } catch (e) {
+                    console.error("Sentiment analysis error:", e);
+                }
+                return null;
+            };
 
             // --- ฟังก์ชันสร้างเสียง Beep ---
             function playBeep() {
@@ -346,6 +407,18 @@
                 void videoContainer.offsetWidth; // บังคับให้เบราว์เซอร์รีเฟรช DOM เล็กน้อย
                 videoContainer.classList.add('flash-success');
             }
+
+            // --- Toggle Keyboard ---
+            const toggleKeyboardBtn = document.getElementById('toggleKeyboardBtn');
+            const virtualKeyboard = document.getElementById('virtualKeyboard');
+            
+            toggleKeyboardBtn.addEventListener('click', () => {
+                if (virtualKeyboard.style.display === 'none') {
+                    virtualKeyboard.style.display = 'flex';
+                } else {
+                    virtualKeyboard.style.display = 'none';
+                }
+            });
 
             // --- 0. ระบบ Auto-Capture (Polling ทุก 0.5 วินาที) ---
             setInterval(async () => {
@@ -436,6 +509,20 @@
                 jsonOutput.style.color = '#c9d1d9';
 
                 try {
+                    // --- Client-Side Sentiment Analysis ---
+                    const fullText = capturedWords.join(" ");
+                    const emotionResult = await window.analyzeEmotionLocally(fullText);
+                    
+                    if (emotionResult) {
+                        const scorePercent = (emotionResult.score * 100).toFixed(2);
+                        jsonOutput.textContent = `วิเคราะห์อารมณ์เบื้องต้น: ${emotionResult.label} (${scorePercent}%)\nกำลังส่งแปลประโยค...`;
+                        jsonOutput.style.color = '#d2a8ff'; // สีม่วงอ่อนสำหรับอารมณ์
+                    } else {
+                        jsonOutput.textContent = `กำลังส่งแปลประโยค...`;
+                        jsonOutput.style.color = '#c9d1d9';
+                    }
+
+                    // --- Send to Translation API ---
                     const response = await fetch('/api/translate', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -443,6 +530,12 @@
                     });
                     
                     const data = await response.json();
+                    
+                    // แทรกผลลัพธ์อารมณ์เบื้องต้นเข้าไปใน JSON ที่แสดงผลด้วยถ้ามี
+                    if (emotionResult && !data.error) {
+                         data.client_sentiment = `${emotionResult.label} (${(emotionResult.score * 100).toFixed(2)}%)`;
+                    }
+                    
                     jsonOutput.textContent = JSON.stringify(data, null, 2);
 
                     if (data.error) {

@@ -7,8 +7,42 @@ import json
 import threading
 import os
 import time
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
+
+# ----------------------------------------------------------------------
+# Section 0: Smart Word Prediction (ML Feature 1)
+# ----------------------------------------------------------------------
+VOCABULARY = ["HELP", "HELLO", "HUNGRY", "HAPPY", "THANK YOU", "PLEASE"]
+vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(1, 3))
+# Fit vectorizer on VOCABULARY right away
+vectorizer.fit(VOCABULARY)
+vocab_tfidf = vectorizer.transform(VOCABULARY)
+
+def predict_word(partial_word):
+    """
+    คาดเดาคำศัพท์จากตัวอักษรบางส่วน bằng TF-IDF และ Cosine Similarity
+    """
+    partial_upper = partial_word.upper()
+    if not partial_upper:
+        return partial_word
+        
+    input_tfidf = vectorizer.transform([partial_upper])
+    similarities = cosine_similarity(input_tfidf, vocab_tfidf).flatten()
+    best_match_idx = np.argmax(similarities)
+    best_score = similarities[best_match_idx]
+    
+    best_word = VOCABULARY[best_match_idx]
+    
+    # เพิ่มความเข้มงวด: คะแนนต้องสูง > 0.5 และความยาวคำต้องใกล้เคียงกัน (คลาดเคลื่อนไม่เกิน 2 ตัวอักษร)
+    len_diff = abs(len(partial_upper) - len(best_word))
+    
+    if best_score > 0.5 and len_diff <= 2:
+        return best_word
+    return partial_word
 
 # -------------------------------------------------i---------------------
 # Section 1: การโหลด Local Model (YOLOv8 .pt)
@@ -195,36 +229,76 @@ def translate_sign():
     if not words_array:
         return jsonify({"error": "ไม่มีคำศัพท์ในตะกร้าให้แปล"})
 
-    # แปลง Array เป็น string ก่อนใส่ Prompt
-    words_json = json.dumps(words_array, ensure_ascii=False)
+    # Logic การจัดกลุ่มตัวอักษรเดี่ยวและการคาดเดาคำ (Smart Word Prediction)
+    processed_words = []
+    current_letters = ""
     
-    # สร้าง System Prompt แบบ Hybrid + Autocomplete (คาดเดาคำ)
+    for word in words_array:
+        # Check if the "word" is just a single letter (length 1) and not a space
+        if len(word) == 1 and word != " ":
+            current_letters += word
+        else:
+            # If we were accumulating letters, process them first
+            if current_letters:
+                predicted = predict_word(current_letters)
+                processed_words.append(predicted)
+                current_letters = ""
+            
+            # Add the current full word or space
+            processed_words.append(word)
+            
+    # Don't forget any trailing accumulated letters
+    if current_letters:
+        predicted = predict_word(current_letters)
+        processed_words.append(predicted)
+
+    # แปลง Array เป็น string ก่อนใส่ Prompt โดยใช้ processed_words แทน words_array
+    words_json = json.dumps(processed_words, ensure_ascii=False)
+    
+    # System Prompt ที่ใช้ Delimiter ป้องกันการหลอน (Anti-Prompt Bleeding)
     system_prompt = """
-    คุณคือ AI ผู้เชี่ยวชาญด้านการแปลภาษามือ (Sign Language Translator & Predictive Text AI)
-    ผู้ใช้จะส่ง Array ที่ผสมกันระหว่าง "คำศัพท์เต็มคำ" และ "ตัวอักษรเดี่ยวๆ" มาให้คุณ
+    คุณคือผู้เชี่ยวชาญระดับสูงด้านการแปลภาษามืออเมริกัน (ASL) เป็นภาษาไทยที่สละสลวย
     
-    กฎการวิเคราะห์และการคาดเดาคำ (Strict Rules):
-    1. การจัดกลุ่ม (Grouping): ตัวอักษรเดี่ยวที่อยู่ติดกัน ให้คุณนำมาเรียงต่อกัน (เช่น "H", "E", "L" -> "HEL") ส่วนคำศัพท์ที่มาเป็นคำอยู่แล้ว (เช่น "Please", "Thank You") ให้คงไว้เหมือนเดิม
-    2. การคาดเดาคำอัตโนมัติ (Auto-complete / Word Prediction): **สำคัญมาก** หากกลุ่มตัวอักษรที่นำมาต่อกัน "สะกดไม่จบ" หรือ "พิมพ์ตกหล่น" (เช่น "H", "E", "L") ให้คุณใช้ความฉลาดของคุณ **คาดเดา (Guess)** ว่าคำศัพท์ภาษาอังกฤษที่ถูกต้องในบริบทนั้นคือคำว่าอะไร (เช่น "HEL" ควรจะเป็น "HELP" หรือ "HELLO")
-    3. บริบทของประโยค: นำคำที่คาดเดาเสร็จแล้ว มาเชื่อมกับคำศัพท์เต็มคำที่มีอยู่ ให้เป็นประโยคที่สมเหตุสมผล
-    4. การแปล: แปลผลลัพธ์สุดท้ายเป็นภาษาไทยที่ฟังดูเป็นธรรมชาติที่สุด
-    5. ห้ามแชทโต้ตอบ ห้ามอธิบาย ตอบกลับเป็น JSON เท่านั้น
+    กฎเหล็ก (Strict Rules):
+    1. การจัดกลุ่มคำ: ตัวอักษรเดี่ยวที่อยู่ติดกันจะถูกรวมเป็นคำศัพท์ (เช่น "E", "Y", "E" -> "EYE")
+    2. ห้ามมั่วความหมาย (No Hallucination): หากคำศัพท์รวมกันมาเป็นพรืดโดยไม่มีช่องว่าง ให้พยายามแยกเป็นคำภาษาอังกฤษที่ถูกต้องก่อน (เช่น LEGHURT ให้แยกเป็น LEG และ HURT)
+    3. คำทับศัพท์ (Transliteration): หลังจากจัดกลุ่มคำแล้ว หากเป็นคำภาษาอังกฤษที่ "สามารถแปลเป็นภาษาไทยได้" (เช่น อวัยวะ, อาการ, คำนาม, กริยา ทั่วไป เช่น ARM=แขน, STOMACH=ท้อง) **ให้แปลความหมายตามปกติ ห้ามทับศัพท์เด็ดขาด!** จะทับศัพท์ก็ต่อเมื่อชุดตัวอักษรนั้นเป็น "ชื่อคน" หรือคำที่ไม่มีความหมายในภาษาอังกฤษเท่านั้น
+    4. ห้ามทิ้งคำศัพท์: ต้องแปลข้อมูลจาก Input ทุกตัว และต้องนำชื่อหรือคำทับศัพท์เข้าไปใส่ในประโยค `fluent_sentence_th` ให้ครบถ้วนเสมอ ห้ามตกหล่น
+    5. Chain of Thought: เขียนกระบวนการคิดวิเคราะห์ลงในฟิลด์ "thought_process" ก่อนเสมอ ว่าจะแยกคำอย่างไร คำไหนแปลความหมาย คำไหนทับศัพท์ และรวมประโยคอย่างไร
+    6. การแปล: เติมคำประธาน (เช่น ฉัน, ผม) หรือคำกริยา เพื่อให้ประโยคภาษาไทยสมบูรณ์
+    7. การตอบกลับ: ต้องตอบกลับเป็น JSON Object เท่านั้น ห้ามมีข้อความอื่นนอกกรอบปีกกา {} เด็ดขาด 
+       JSON ต้องมีคีย์ตรงตามนี้เป๊ะๆ:
+       {
+           "thought_process": "การวิเคราะห์ของคุณ",
+           "fluent_sentence_th": "ประโยคแปลไทย",
+           "emotion_tone": "อารมณ์/ความรู้สึก"
+       }
+    8. ⚠️ กฎเหล็กสูงสุด: ห้ามลอกชื่อคนจากข้อความตัวอย่างด้านล่างไปตอบเด็ดขาด! ให้แปลเฉพาะคำและชื่อคนสะกดตรงตาม "Input ปัจจุบัน" ที่คุณได้รับเท่านั้น!
+
+    --- ตัวอย่างการทำงาน (EXAMPLES ONLY - DO NOT COPY) ---
+    ตัวอย่างที่ 1:
+    Input: ["Help", "S", "C", "A", "R", "E"]
+    Output: {
+      "thought_process": "ผู้ใช้ส่งคำว่า 'Help' และสะกดคำว่า S-C-A-R-E (กลัว) ฉันรวมสองคำนี้เข้าด้วยกัน แปลว่า ช่วยด้วย ฉันกลัว พร้อมเติมประธาน 'ฉัน'",
+      "fluent_sentence_th": "ช่วยด้วย! ตอนนี้ฉันรู้สึกหวาดกลัวมาก",
+      "emotion_tone": "หวาดกลัว"
+    }
     
-    ตัวอย่างที่ 1 (เดาคำจากตัวอักษรไม่ครบ + คำเต็ม):
-    Input: ["Please", "H", "E", "L", "Thank You"]
-    Output: {"fluent_sentence_th": "ได้โปรดช่วยด้วย ขอบคุณ", "emotion_tone": "ขอความช่วยเหลือ/ขอบคุณ"}
-    
-    ตัวอย่างที่ 2 (เดาคำศัพท์ที่พบบ่อย):
-    Input: ["I", "A", "M", "H", "U", "N", "G"]
-    Output: {"fluent_sentence_th": "ฉันหิว", "emotion_tone": "หิว"}
-    
-    ตัวอย่างที่ 3 (ชื่อคนผสมโหมดคำศัพท์):
-    Input: ["A", "C", "H", "I", " ", "love", "D", "O", "G"]
-    Output: {"fluent_sentence_th": "อชิรักหมา", "emotion_tone": "รัก/เอ็นดู"}
+    ตัวอย่างที่ 2:
+    Input: ["M", "Y", "N", "A", "M", "E", "I", "S", "B", "O", "B"]
+    Output: {
+      "thought_process": "ตัวอักษรเรียงติดกันยาว ฉันแยกคำได้เป็น MY, NAME, IS และ BOB แต่ฐานข้อมูลชี้ว่า BOB เป็นชื่อเฉพาะ จึงอ่านออกเสียงภาษาไทยเป็น 'บ๊อบ' และแปลรวมกันทั้งหมด",
+      "fluent_sentence_th": "ผมชื่อว่าบ๊อบ",
+      "emotion_tone": "ทักทาย/เป็นมิตร"
+    }
+    -------------------------------------------------------
     """
     
     try:
         model_name = "llama3" # หรือเปลี่ยนเป็น llama3.1/openthaigpt ตามที่โหลดไว้
+        
+        # ตอนประกอบร่างส่งให้ Ollama
+        user_message = f"Input ปัจจุบัน: {words_json}\nจงวิเคราะห์และแปลผล Input นี้เท่านั้น:"
         
         response = ollama.chat(model=model_name, messages=[
             {
@@ -233,12 +307,23 @@ def translate_sign():
             },
             {
                 'role': 'user',
-                'content': f"ตะกร้าคำศัพท์จากภาษามือคือ: {words_json}"
+                'content': user_message
             }
-        ], format='json')
+        ], format='json', options={'temperature': 0.1})
         
+        import re
         result_str = response['message']['content']
-        result_data = json.loads(result_str)
+        
+        # ค้นหาข้อความที่อยู่ระหว่าง { และ } เพื่อตัดคำพูดนอกกรอบของ Ollama ทิ้ง
+        json_match = re.search(r'\{.*\}', result_str, re.DOTALL)
+        if json_match:
+            clean_json_str = json_match.group(0)
+            try:
+                result_data = json.loads(clean_json_str)
+            except json.JSONDecodeError:
+                result_data = {"error": "Llama 3 ตอบกลับมาในรูปแบบที่อ่านไม่ได้ (JSON parse error)"}
+        else:
+            result_data = {"error": "Llama 3 ไม่ได้ตอบกลับมาเป็นรูปแบบ JSON"}
         
         fluent_text_th = result_data.get("fluent_sentence_th", "")
         if fluent_text_th:

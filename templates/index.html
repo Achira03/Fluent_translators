@@ -542,6 +542,14 @@
                         jsonOutput.style.color = '#f85149'; // Error = สีแดง
                     } else {
                         jsonOutput.style.color = '#a5d6ff'; // Success = ฟ้าสว่าง
+                        
+                        // ออกเสียงภาษาไทยผ่าน Web Speech API ของเบราว์เซอร์
+                        if (data.fluent_sentence_th) {
+                            const utterance = new SpeechSynthesisUtterance(data.fluent_sentence_th);
+                            utterance.lang = 'th-TH';
+                            utterance.rate = 1.0; // ความเร็วปกติ
+                            window.speechSynthesis.speak(utterance);
+                        }
                     }
 
                 } catch (e) {

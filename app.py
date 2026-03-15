@@ -326,8 +326,9 @@ def translate_sign():
             result_data = {"error": "Llama 3 ไม่ได้ตอบกลับมาเป็นรูปแบบ JSON"}
         
         fluent_text_th = result_data.get("fluent_sentence_th", "")
-        if fluent_text_th:
-            speak_text(fluent_text_th)
+        # เอาฟังก์ชันการพูด (pyttsx3) ออกจาก backend แล้วไปใช้ Web Speech API ใน frontend แทน
+        # if fluent_text_th:
+        #     speak_text(fluent_text_th)
             
         return jsonify(result_data)
         
